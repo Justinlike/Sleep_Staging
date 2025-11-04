@@ -12,26 +12,27 @@ config = tf.compat.v1.ConfigProto()
 config.gpu_options.allow_growth=True
 sess = tf.compat.v1.Session(config=config)
 
-from keras import backend as K
+import argparse
+
+# from keras import backend as K
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, cohen_kappa_score
 # import tensorflow as tf # 用来等价K
 
 def weighted_categorical_crossentropy(weights):
 
-    weights = K.variable(weights)
-
+    weights = tf.Variable(weights)
 
     def loss(y_true, y_pred):
         # scale predictions so that the class probas of each sample sum to 1
-        y_pred /= K.sum(y_pred, axis=-1, keepdims=True)
+        y_pred /= tf.sum(y_pred, axis=-1, keepdims=True)
         
         # clip to prevent NaN's and Inf's
-        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
+        y_pred = tf.clip(y_pred, tf.epsilon(), 1 - tf.epsilon())
         
         # calc
-        loss = y_true * K.log(y_pred) * weights
-        loss = -K.sum(loss, -1)
+        loss = y_true * tf.log(y_pred) * weights
+        loss = -tf.sum(loss, -1)
         return loss
 
     return loss
@@ -66,10 +67,10 @@ def resnet_se_block(inputs, num_filters, kernel_size, strides, ratio):
 def create_model(Fs = 100, n_classes=5, seq_length=15, summary=True):   
     x_input = tf.keras.Input(shape=(seq_length, 30*Fs, 1))  # (None, seq_length, 3000, 1)
     
-    x = resnet_se_block(x_input, 32, 3, 1, 4)  # (None, seq_length, 3000, 32)    
+    x = resnet_se_block(x_input, 32, 3, 1, 4)  # (None, seq_length, 3000, 32)
     x = tf.keras.layers.MaxPool2D(pool_size=(4,1), strides=(4,1), padding='same', data_format = 'channels_first')(x)  # (None, seq_length, 750, 32)
-    
-    x = resnet_se_block(x, 64, 5, 1, 4)  # (None, seq_length, 750, 64) 
+
+    x = resnet_se_block(x, 64, 5, 1, 4)  # (None, seq_length, 750, 64)
     x = tf.keras.layers.MaxPool2D(pool_size=(4,1), strides=(4,1), padding='same', data_format = 'channels_first')(x)  # (None, seq_length, 188, 64)
     
     x = resnet_se_block(x, 128, 7, 1, 4)  # (None, seq_length, 188, 128)
@@ -94,8 +95,15 @@ def create_model(Fs = 100, n_classes=5, seq_length=15, summary=True):
     return model
 
 ## data preparation
-# data_path = 'data/sleepedf/sleep-cassette/eeg_fpz_cz'
-data_path = 'data/synthetic_egg'
+parser = argparse.ArgumentParser(description='Train ResNet-SE-LSTM or dry-run data loading')
+parser.add_argument('--data_path', type=str, default='data/sleepedf/sleep-cassette/eeg_fpz_cz',
+                    help='Directory containing .npz files with keys x,y (default: sleepedf)')
+parser.add_argument('--dry_run', action='store_true', help='Only load and split data, then exit')
+parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs')
+parser.add_argument('--batch_size', type=int, default=16, help='Training batch size')
+args = parser.parse_args()
+
+data_path = args.data_path
 
 fnames = sorted(glob(os.path.join(data_path, '*.npz')))
 
