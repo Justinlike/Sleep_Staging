@@ -5,8 +5,10 @@ from glob import glob
 import seaborn as sns
 import matplotlib.pyplot as plt
 plt.rcParams.update({'font.size': 13})
-
 import tensorflow as tf
+import tensorflow.keras.backend as K
+
+
 config = tf.compat.v1.ConfigProto()
 # config.gpu_options.per_process_gpu_memory_fraction = 0.4
 config.gpu_options.allow_growth=True
@@ -21,18 +23,18 @@ from sklearn.metrics import accuracy_score, confusion_matrix, classification_rep
 
 def weighted_categorical_crossentropy(weights):
 
-    weights = tf.Variable(weights)
+    weights = (K.variable(weights))
 
     def loss(y_true, y_pred):
         # scale predictions so that the class probas of each sample sum to 1
-        y_pred /= tf.sum(y_pred, axis=-1, keepdims=True)
+        y_pred /= (K.sum(y_pred, axis=-1, keepdims=True))
         
         # clip to prevent NaN's and Inf's
-        y_pred = tf.clip(y_pred, tf.epsilon(), 1 - tf.epsilon())
+        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
         
         # calc
-        loss = y_true * tf.log(y_pred) * weights
-        loss = -tf.sum(loss, -1)
+        loss = y_true * K.log(y_pred) * weights
+        loss = -K.sum(loss, -1)
         return loss
 
     return loss
@@ -40,10 +42,10 @@ def weighted_categorical_crossentropy(weights):
 
 def resnet_se_block(inputs, num_filters, kernel_size, strides, ratio):      
     # 1D conv
-    x = tf.keras.layers.Conv1D(filters=num_filters, kernel_size=kernel_size, strides=strides, padding='same', kernel_initializer='he_normal')(inputs)
+    x = tf.keras.layers.Conv2D(filters=num_filters, kernel_size=kernel_size, strides=strides, padding='same', kernel_initializer='he_normal')(inputs)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.Activation('relu')(x)
-    x = tf.keras.layers.Conv1D(filters=num_filters, kernel_size=kernel_size, strides=strides, padding='same', kernel_initializer='he_normal')(x)
+    x = tf.keras.layers.Conv2D(filters=num_filters, kernel_size=kernel_size, strides=strides, padding='same', kernel_initializer='he_normal')(x)
     x = tf.keras.layers.BatchNormalization()(x)
     
     # se block
@@ -55,7 +57,7 @@ def resnet_se_block(inputs, num_filters, kernel_size, strides, ratio):
     x = tf.keras.layers.multiply([x, se])
     
     # skip connection
-    x_skip = tf.keras.layers.Conv1D(filters=num_filters, kernel_size=1, strides=1, padding='same', kernel_initializer='he_normal')(inputs)
+    x_skip = tf.keras.layers.Conv2D(filters=num_filters, kernel_size=1, strides=1, padding='same', kernel_initializer='he_normal')(inputs)
     x_skip = tf.keras.layers.BatchNormalization()(x_skip)
 
     x = tf.keras.layers.Add()([x, x_skip])
@@ -66,7 +68,7 @@ def resnet_se_block(inputs, num_filters, kernel_size, strides, ratio):
 
 def create_model(Fs = 100, n_classes=5, seq_length=15, summary=True):   
     x_input = tf.keras.Input(shape=(seq_length, 30*Fs, 1))  # (None, seq_length, 3000, 1)
-    
+    # print(x_input.shape)
     x = resnet_se_block(x_input, 32, 3, 1, 4)  # (None, seq_length, 3000, 32)
     x = tf.keras.layers.MaxPool2D(pool_size=(4,1), strides=(4,1), padding='same', data_format = 'channels_first')(x)  # (None, seq_length, 750, 32)
 
@@ -96,7 +98,7 @@ def create_model(Fs = 100, n_classes=5, seq_length=15, summary=True):
 
 ## data preparation
 parser = argparse.ArgumentParser(description='Train ResNet-SE-LSTM or dry-run data loading')
-parser.add_argument('--data_path', type=str, default='data/sleepedf/sleep-cassette/eeg_fpz_cz',
+parser.add_argument('--data_path', type=str, default='E:/datasets/sleep-edf-database-expanded-1.0.0/sleep-cassette/eeg_fpz_cz',
                     help='Directory containing .npz files with keys x,y (default: sleepedf)')
 parser.add_argument('--dry_run', action='store_true', help='Only load and split data, then exit')
 parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs')
@@ -145,7 +147,7 @@ X_seq_val = np.expand_dims(X_seq_val, -1)
 X_seq_test = np.expand_dims(X_seq_test, -1)
 
 ## model training
-checkpoint = tf.keras.callbacks.ModelCheckpoint(filepath='model', monitor='val_loss', verbose=1, save_best_only=True)
+checkpoint = tf.keras.callbacks.ModelCheckpoint(filepath='.keras', monitor='val_loss', verbose=1, save_best_only=True)
 early = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=20, verbose=1)
 redonplat = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', patience=5, verbose=1)
 csv_logger = tf.keras.callbacks.CSVLogger('log.csv', separator=',', append=True)
@@ -158,7 +160,8 @@ callbacks_list = [
     
 model = create_model(seq_length=seq_length)
 
-hist = model.fit(X_seq_train, y_seq_train, batch_size=16, epochs=100, verbose=1,
+
+hist = model.fit(X_seq_train, y_seq_train, batch_size=16, epochs=1, verbose=1,
                  validation_data=(X_seq_val, y_seq_val), callbacks=callbacks_list)
 
 plt.figure(figsize=(15,5))
@@ -180,7 +183,7 @@ plt.suptitle('hist')
 plt.savefig('hist.png')
 plt.close()
 
-model.save('model.h5')
+model.save('model.keras')
 
 ## output
 y_seq_pred = model.predict(X_seq_test, batch_size=1)

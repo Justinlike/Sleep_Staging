@@ -14,7 +14,7 @@ ann2label = {
     "Sleep stage W": 0,
     "Sleep stage 1": 1,
     "Sleep stage 2": 2,
-    "Sleep stage 3": 3, "Sleep stage 4": 3, # Follow AASM Manual
+    "Sleep stage 3": 3, "Sleep stage 4": 3,  # Follow AASM Manual
     "Sleep stage R": 4,
     "Sleep stage ?": 6,
     "Movement time": 5
@@ -23,9 +23,9 @@ ann2label = {
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="data/sleepedf/sleep-cassette",
+    parser.add_argument("--data_dir", type=str, default="E:/datasets/sleep-edf-database-expanded-1.0.0/sleep-cassette",
                         help="File path to the Sleep-EDF dataset.")
-    parser.add_argument("--output_dir", type=str, default="data/sleepedf/sleep-cassette/eeg_fpz_cz",
+    parser.add_argument("--output_dir", type=str, default="E:/datasets/sleep-edf-database-expanded-1.0.0/sleep-cassette/eeg_fpz_cz",
                         help="Directory where to save outputs.")
     parser.add_argument("--select_ch", type=str, default="EEG Fpz-Cz",
                         help="Name of the channel in the dataset.")
@@ -72,7 +72,7 @@ def main():
         file_duration = psg_f.getFileDuration()
         logger.info("File duration: {} sec".format(file_duration))
         epoch_duration = psg_f.datarecord_duration
-        if psg_f.datarecord_duration == 60: # Fix problems of SC4362F0-PSG.edf, SC4362FC-Hypnogram.edf
+        if psg_f.datarecord_duration == 60:  # Fix problems of SC4362F0-PSG.edf, SC4362FC-Hypnogram.edf
             epoch_duration = epoch_duration / 2
             logger.info("Epoch duration: {} sec (changed from 60 sec)".format(epoch_duration))
         else:
@@ -88,12 +88,15 @@ def main():
                 break
         if select_ch_idx == -1:
             raise Exception("Channel not found.")
-        
-        if psg_f.datarecord_duration == 60:
-            sampling_rate = psg_f.getSampleFrequency(select_ch_idx)/60
-        else:
-            sampling_rate = psg_f.getSampleFrequency(select_ch_idx)/30
-        
+
+        # 除以60发生报错，先试试不除60，后续看论文
+        # if psg_f.datarecord_duration == 60:
+        #     sampling_rate = psg_f.getSampleFrequency(select_ch_idx) / 60
+        # else:
+        #     sampling_rate = psg_f.getSampleFrequency(select_ch_idx) / 30
+
+        sampling_rate = psg_f.getSampleFrequency(select_ch_idx)
+
         n_epoch_samples = int(epoch_duration * sampling_rate)
         signals = psg_f.readSignal(select_ch_idx).reshape(-1, n_epoch_samples)
         logger.info("Select channel: {}".format(select_ch))
@@ -102,7 +105,7 @@ def main():
 
         # Sanity check
         n_epochs = psg_f.datarecords_in_file
-        if psg_f.datarecord_duration == 60: # Fix problems of SC4362F0-PSG.edf, SC4362FC-Hypnogram.edf
+        if psg_f.datarecord_duration == 60:  # Fix problems of SC4362F0-PSG.edf, SC4362FC-Hypnogram.edf
             n_epochs = n_epochs * 2
         assert len(signals) == n_epochs, f"signal: {signals.shape} != {n_epochs}"
 
@@ -128,7 +131,7 @@ def main():
             duration_epoch = int(duration_sec / epoch_duration)
 
             # Generate sleep stage labels
-            label_epoch = np.ones(duration_epoch, dtype=np.int) * label
+            label_epoch = np.ones(duration_epoch, dtype=np.int8) * label
             labels.append(label_epoch)
 
             total_duration += duration_sec
@@ -152,7 +155,7 @@ def main():
         end_idx = nw_idx[-1] + (w_edge_mins * 2)
         if start_idx < 0: start_idx = 0
         if end_idx >= len(y): end_idx = len(y) - 1
-        select_idx = np.arange(start_idx, end_idx+1)
+        select_idx = np.arange(start_idx, end_idx + 1)
         logger.info("Data before selection: {}, {}".format(x.shape, y.shape))
         x = x[select_idx]
         y = y[select_idx]
@@ -176,8 +179,8 @@ def main():
         # Save
         filename = ntpath.basename(psg_fnames[i]).replace("-PSG.edf", ".npz")
         save_dict = {
-            "x": x, 
-            "y": y, 
+            "x": x,
+            "y": y,
             "fs": sampling_rate,
             "ch_label": select_ch,
             "start_datetime": start_datetime,
