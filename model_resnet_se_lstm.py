@@ -20,91 +20,20 @@ import argparse
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, cohen_kappa_score
 # import tensorflow as tf # 用来等价K
+from model import create_model
 
-def weighted_categorical_crossentropy(weights):
-
-    weights = (K.variable(weights))
-
-    def loss(y_true, y_pred):
-        # scale predictions so that the class probas of each sample sum to 1
-        y_pred /= (K.sum(y_pred, axis=-1, keepdims=True))
-        
-        # clip to prevent NaN's and Inf's
-        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
-        
-        # calc
-        loss = y_true * K.log(y_pred) * weights
-        loss = -K.sum(loss, -1)
-        return loss
-
-    return loss
-
-
-def resnet_se_block(inputs, num_filters, kernel_size, strides, ratio):      
-    # 1D conv
-    x = tf.keras.layers.Conv2D(filters=num_filters, kernel_size=kernel_size, strides=strides, padding='same', kernel_initializer='he_normal')(inputs)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Activation('relu')(x)
-    x = tf.keras.layers.Conv2D(filters=num_filters, kernel_size=kernel_size, strides=strides, padding='same', kernel_initializer='he_normal')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    
-    # se block
-    se = tf.keras.layers.Lambda(lambda x: K.mean(x, axis=-2, keepdims=True))(x) # equal to tf.keras.layers.GlobalAveragePooling1D
-    se = tf.keras.layers.Dense(units=num_filters//ratio)(se)
-    se = tf.keras.layers.Activation('relu')(se)
-    se = tf.keras.layers.Dense(units=num_filters)(se)
-    se = tf.keras.layers.Activation('sigmoid')(se)
-    x = tf.keras.layers.multiply([x, se])
-    
-    # skip connection
-    x_skip = tf.keras.layers.Conv2D(filters=num_filters, kernel_size=1, strides=1, padding='same', kernel_initializer='he_normal')(inputs)
-    x_skip = tf.keras.layers.BatchNormalization()(x_skip)
-
-    x = tf.keras.layers.Add()([x, x_skip])
-    x = tf.keras.layers.Activation('relu')(x)
-    # x = tf.keras.layers.MaxPool2D(pool_size=(2,1), strides=(2,1), padding='same', data_format = 'channels_first')(x)
-    
-    return x
-
-def create_model(Fs = 100, n_classes=5, seq_length=15, summary=True):   
-    x_input = tf.keras.Input(shape=(seq_length, 30*Fs, 1))  # (None, seq_length, 3000, 1)
-    # print(x_input.shape)
-    x = resnet_se_block(x_input, 32, 3, 1, 4)  # (None, seq_length, 3000, 32)
-    x = tf.keras.layers.MaxPool2D(pool_size=(4,1), strides=(4,1), padding='same', data_format = 'channels_first')(x)  # (None, seq_length, 750, 32)
-
-    x = resnet_se_block(x, 64, 5, 1, 4)  # (None, seq_length, 750, 64)
-    x = tf.keras.layers.MaxPool2D(pool_size=(4,1), strides=(4,1), padding='same', data_format = 'channels_first')(x)  # (None, seq_length, 188, 64)
-    
-    x = resnet_se_block(x, 128, 7, 1, 4)  # (None, seq_length, 188, 128)
-    x = tf.keras.layers.Lambda(lambda x: K.mean(x, axis=-2, keepdims=False))(x)  # (None, seq_length, 128), equal to tf.keras.layers.GlobalAveragePool
-   
-    x = tf.keras.layers.Dropout(rate=0.5)(x)  # (None, seq_length, 128)
-        
-    # LSTM
-    x = tf.keras.layers.LSTM(units=64, dropout=0.5, activation='relu', return_sequences=True)(x)  # (None, seq_length, 64)
-       
-    # Classify
-    x_out = tf.keras.layers.Dense(units=n_classes, activation='softmax')(x)  # (None, seq_length, 5)
-    
-    model = tf.keras.models.Model(x_input, x_out)
-        
-    model.compile(optimizer='adam', loss=weighted_categorical_crossentropy(np.array([1, 1.5, 1, 1, 1])), metrics=['accuracy'])  # np.array([1, 3, 1, 5, 3]), np.array([1.5, 2.5, 1, 1.5, 2.5])
-    
-    if summary:
-        model.summary()
-        tf.keras.utils.plot_model(model, show_shapes=True, dpi = 300, to_file='model.png')
-        
-    return model
-
-## data preparation
+# argument parser
 parser = argparse.ArgumentParser(description='Train ResNet-SE-LSTM or dry-run data loading')
 parser.add_argument('--data_path', type=str, default='E:/datasets/sleep-edf-database-expanded-1.0.0/sleep-cassette/eeg_fpz_cz',
                     help='Directory containing .npz files with keys x,y (default: sleepedf)')
 parser.add_argument('--dry_run', action='store_true', help='Only load and split data, then exit')
 parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs')
 parser.add_argument('--batch_size', type=int, default=16, help='Training batch size')
+parser.add_argument('--model_read_path', type=str, default='logs/model.keras')
+parser.add_argument('--model_save_path', type=str, default='logs', help='Path to saving model (default: none)')
 args = parser.parse_args()
 
+## data preparation
 data_path = args.data_path
 
 fnames = sorted(glob(os.path.join(data_path, '*.npz')))
@@ -157,11 +86,16 @@ callbacks_list = [
     redonplat,
     csv_logger,
     ]
-    
-model = create_model(seq_length=seq_length)
+
+if args.model_read_path and os.path.exists(args.model_read_path):
+    print('Load model from', args.model_path)
+    custom_objects = {'tf': tf, 'K': K}
+    model = tf.keras.models.load_model('model.keras', custom_objects=custom_objects)
+else:
+    model = create_model(seq_length=seq_length)
 
 
-hist = model.fit(X_seq_train, y_seq_train, batch_size=16, epochs=1, verbose=1,
+hist = model.fit(X_seq_train, y_seq_train, batch_size=args.batch_size, epochs=args.epochs, verbose=1,
                  validation_data=(X_seq_val, y_seq_val), callbacks=callbacks_list)
 
 plt.figure(figsize=(15,5))
